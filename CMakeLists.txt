@@ -1,0 +1,51 @@
+cmake_minimum_required(VERSION 3.20)
+project(exchange LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+option(EXCHANGE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(EXCHANGE_SANITIZE)
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+add_compile_options(-Wall -Wextra -Wpedantic)
+
+# --- The order book library --------------------------------------------------
+add_library(exchange cpp/src/order_book.cpp)
+target_include_directories(exchange PUBLIC cpp/include)
+
+# --- Third-party test and benchmark libraries (downloaded at configure time) --
+include(FetchContent)
+FetchContent_Declare(googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_Declare(benchmark
+  URL https://github.com/google/benchmark/archive/refs/tags/v1.9.1.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest benchmark)
+
+# --- Tests -------------------------------------------------------------------
+enable_testing()
+add_executable(exchange_tests
+  cpp/tests/order_book_test.cpp
+  cpp/tests/random_compare_test.cpp)
+target_link_libraries(exchange_tests PRIVATE exchange GTest::gtest_main)
+include(GoogleTest)
+gtest_discover_tests(exchange_tests)
+
+# --- Benchmarks --------------------------------------------------------------
+add_executable(order_book_bench cpp/bench/order_book_bench.cpp)
+target_link_libraries(order_book_bench PRIVATE exchange benchmark::benchmark)
+
+add_executable(latency cpp/bench/latency.cpp)
+target_link_libraries(latency PRIVATE exchange)
