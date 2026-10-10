@@ -42,3 +42,13 @@ jobs:
           ./build/replay_session session.bin | tail -5 > replayed.txt
           cat replayed.txt
           diff recorded.txt replayed.txt
+      - name: TCP end-to-end run (server, load client, replay server log)
+        if: matrix.name == 'Release (GCC)'
+        run: |
+          ./build/exchange_server 9000 server.bin &
+          SERVER_PID=$!
+          sleep 1
+          ./build/load_client 9000 50000
+          sleep 1  # let the server flush its log after the client disconnects
+          kill $SERVER_PID
+          ./build/replay_session server.bin

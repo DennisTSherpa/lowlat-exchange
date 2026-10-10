@@ -51,6 +51,9 @@ public:
     // Total resting quantity at one price on one side (0 if none).
     Quantity volume_at(Side side, Price price) const;
 
+    // True if an order with this id is resting in the book.
+    bool has_order(OrderId id) const { return locations_.contains(id); }
+
     // Number of orders currently resting in the book.
     std::size_t order_count() const { return locations_.size(); }
 

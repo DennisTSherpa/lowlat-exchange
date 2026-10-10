@@ -21,13 +21,10 @@ struct Event {
     bool operator==(const Event&) const = default;
 };
 
-// Appends events to a binary file, one fixed-size record per event:
-//
-//   type (1 byte) | side (1) | id (8) | price (8) | quantity (4)  = 22 bytes
-//
-// Numbers are written in the machine's native byte order (little-endian on
-// x86 and ARM Linux). Fixed-size records mean there is nothing to parse:
-// the reader copies 22 bytes at a time back into the same fields.
+// Appends events to a binary file, one fixed-size 22-byte record per event,
+// in exactly the format used for requests on the network (see wire.hpp).
+// Fixed-size records mean there is nothing to parse: the reader copies
+// 22 bytes at a time back into the same fields.
 class EventLogWriter {
 public:
     explicit EventLogWriter(const std::string& path);

@@ -9,9 +9,31 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/latency            # per-operation latency percentiles, 1,000,000 actions
 ./build/order_book_bench   # Google Benchmark throughput
+
+# end to end over TCP (two terminals)
+./build/exchange_server 9000
+./build/load_client 9000 200000
 ```
 
 The workload is fixed by a random seed (see `cpp/bench/workload.hpp`). It is about 70% new limit orders within ±50 ticks of a mid price and 30% cancels of recent orders. Roughly half the orders trade.
+
+## Milestone 3: end to end over TCP
+
+**Same machine.** Server and client run as two processes on the same VM and talk over loopback (127.0.0.1). The client sends one request, waits for the response, then sends the next. Each sample is a full round trip: client write → kernel → server read → match → server write → kernel → client read.
+
+| Run | p50 | p90 | p99 | p99.9 | max |
+|-----|-----|-----|-----|-------|-----|
+| 1 | 30.9 µs | 38.8 µs | 70.4 µs | 234 µs | 4.75 ms |
+| 2 | 29.6 µs | 38.4 µs | 65.1 µs | 170 µs | 6.45 ms |
+| 3 | 30.0 µs | 38.4 µs | 71.9 µs | 250 µs | 4.11 ms |
+
+200,000 requests per run. The server logged every request, and replaying each log gave the same 108,848 trades every time.
+
+### What these numbers say
+
+- **Matching is under 0.5% of the round trip.** The order book takes ~0.1 µs; the whole trip takes ~30 µs. Almost all of the time goes to the operating system: four system calls per round trip (two writes, two reads), and waking up a sleeping process each time a message arrives.
+- This is why real trading systems spend so much effort on the network path (busy-polling instead of sleeping, pinning threads to cores, and eventually kernel-bypass networking), and comparatively little on the book itself.
+- A simple next experiment is busy-polling. The receiver keeps checking the socket in a loop instead of sleeping in `read()`, which removes the wake-up cost at the price of one fully busy CPU core per side.
 
 ## Milestone 2: no hash table resize during trading
 

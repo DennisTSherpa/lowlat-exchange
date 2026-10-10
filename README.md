@@ -10,8 +10,8 @@ The rule for this project is **simplest version first**. Each part starts with p
 |-----------|------|-------|
 | 1 | Order book: add, cancel, match, with tests and benchmarks | ✅ done |
 | 2 | Matching engine: market orders, event log, replay, 10 ms worst case fixed | ✅ done |
-| 3 | Order entry over TCP, end-to-end latency | next |
-| 4 | Python: bindings, market simulator, backtest | planned |
+| 3 | Order entry over TCP, end-to-end latency | ✅ done |
+| 4 | Python: bindings, market simulator, backtest | next |
 | 5 | Web view of the live book | planned |
 
 ## Build and test
@@ -24,6 +24,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/latency
 ./build/record_session session.bin && ./build/replay_session session.bin
+
+# end to end over TCP (two terminals)
+./build/exchange_server 9000 server.bin
+./build/load_client 9000 200000
 ```
 
 GoogleTest and Google Benchmark are downloaded automatically the first time you run CMake.
@@ -70,26 +74,40 @@ OrderBook ──► trades
 - That means any session can be **replayed** from its log, so a bug seen once can be reproduced as many times as needed. `record_session` and `replay_session` show this: both print a fingerprint of every trade, and the two fingerprints match. CI checks this on every push.
 - The log format ([`event_log.hpp`](cpp/include/exchange/event_log.hpp)) is fixed-size binary records: type, side, id, price, quantity. There's nothing to parse; the reader just copies the bytes back.
 
+## Order entry over TCP
+
+```
+load_client ──22-byte request──► exchange_server ──► MatchingEngine ──► OrderBook
+            ◄──17-byte response──
+```
+
+- **Messages are fixed-size binary** ([`wire.hpp`](cpp/include/exchange/wire.hpp)). A request is 22 bytes (type, side, id, price, quantity) and a response is 17 bytes (accepted or rejected, id, filled quantity, number of trades). There's no text parsing or JSON. The request is the exact same 22-byte record the event log stores, so a server's log is a recording of what it received.
+- **The server** ([`tcp.cpp`](cpp/src/tcp.cpp)) uses plain blocking POSIX sockets and serves one client at a time. It reads a request, applies it, and sends exactly one response.
+- **TCP is a stream, not a list of messages.** One `read()` may return half a message, or one and a half. `read_exact` loops until a whole message has arrived. This is the most common bug in hand-written network code.
+- **`TCP_NODELAY`** turns off Nagle's algorithm, which would otherwise hold small messages back for a short while to batch them up.
+- **Invalid requests are rejected:** unknown message types or sides, zero quantity, duplicate ids, and cancels of orders that aren't in the book.
+
 ## How we know it's correct
 
 - **Unit tests** ([`order_book_test.cpp`](cpp/tests/order_book_test.cpp)) cover each rule on its own: priority, partial fills, sweeping several levels, and cancels.
 - **Randomized comparison** (limit orders, market orders and cancels) ([`random_compare_test.cpp`](cpp/tests/random_compare_test.cpp)): a slow [reference book](cpp/tests/reference_book.hpp) that just scans a flat list is easy to check by eye. The test sends 100,000 random orders and cancels to both books and checks they agree after every step. If the real book swapped "oldest first" for "newest first", this test would catch it within a few dozen steps.
 - **Replay test** ([`engine_test.cpp`](cpp/tests/engine_test.cpp)) records 20,000 random events, replays them into a fresh engine, and checks that the trades and the final book are identical.
+- **Network tests** ([`tcp_test.cpp`](cpp/tests/tcp_test.cpp)) start a real server on a random local port, talk to it with the client, and check every response and the final book.
 - **CI** runs every test with GCC, with Clang, and under AddressSanitizer and UndefinedBehaviorSanitizer, which catch memory bugs.
 
 ## Performance
 
-See [BENCHMARKS.md](BENCHMARKS.md). On a shared cloud VM, the current median is **~115 ns per operation**, p99 is **~500 ns**, and the worst case is **under 2 ms** (down from 10 ms).
+See [BENCHMARKS.md](BENCHMARKS.md). On a shared cloud VM, the current median is **~115 ns per operation**, p99 is **~500 ns**, and the worst case is **under 2 ms** (down from 10 ms). A full round trip over TCP takes **~30 µs**, and almost all of that is the operating system, not the matching.
 
 We report percentiles, not averages. In trading the slow outliers matter most, because the one slow order is the one that misses the trade.
 
 ## Layout
 
 ```
-cpp/include/exchange/   headers (types, order book, event log, matching engine)
+cpp/include/exchange/   headers (types, order book, event log, matching engine, wire format, TCP)
 cpp/src/                implementation
 cpp/tests/              unit tests, reference book, randomized comparison test
 cpp/bench/              Google Benchmark + latency percentile tool
-cpp/tools/              record_session / replay_session
+cpp/tools/              exchange_server, load_client, record_session, replay_session
 .github/workflows/      CI
 ```
