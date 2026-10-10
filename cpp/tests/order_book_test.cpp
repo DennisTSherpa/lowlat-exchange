@@ -101,5 +101,32 @@ TEST(OrderBook, IgnoresZeroQuantityAndDuplicateIds) {
     EXPECT_EQ(book.volume_at(Side::Buy, 98), 0u);
 }
 
+TEST(OrderBook, MarketOrderTakesBestPricesAtAnyPrice) {
+    OrderBook book;
+    book.add_limit(sell(1, 100, 5));
+    book.add_limit(sell(2, 150, 5));
+    auto trades = book.add_market(buy(3, 0, 8));  // price is ignored
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[0], (Trade{1, 3, 100, 5}));
+    EXPECT_EQ(trades[1], (Trade{2, 3, 150, 3}));
+    EXPECT_EQ(book.volume_at(Side::Sell, 150), 2u);
+}
+
+TEST(OrderBook, MarketOrderNeverRests) {
+    OrderBook book;
+    book.add_limit(buy(1, 99, 4));
+    auto trades = book.add_market(sell(2, 0, 10));  // only 4 available
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(trades[0], (Trade{1, 2, 99, 4}));
+    EXPECT_EQ(book.order_count(), 0u);  // the other 6 are dropped, not rested
+    EXPECT_FALSE(book.best_ask());
+}
+
+TEST(OrderBook, MarketOrderIntoEmptyBookDoesNothing) {
+    OrderBook book;
+    EXPECT_TRUE(book.add_market(buy(1, 0, 10)).empty());
+    EXPECT_EQ(book.order_count(), 0u);
+}
+
 }  // namespace
 }  // namespace exchange

@@ -18,6 +18,8 @@ struct Order {
     Side side;
     Price price;
     Quantity quantity;
+
+    bool operator==(const Order&) const = default;
 };
 
 // A trade always happens at the price of the order that was already

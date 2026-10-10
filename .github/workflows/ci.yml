@@ -35,3 +35,10 @@ jobs:
       - name: Latency smoke run
         if: matrix.name == 'Release (GCC)'
         run: ./build/latency 200000
+      - name: Determinism check (record, replay, compare)
+        if: matrix.name == 'Release (GCC)'
+        run: |
+          ./build/record_session session.bin 200000 | tail -5 > recorded.txt
+          ./build/replay_session session.bin | tail -5 > replayed.txt
+          cat replayed.txt
+          diff recorded.txt replayed.txt

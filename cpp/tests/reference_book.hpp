@@ -16,29 +16,8 @@ namespace exchange::testing {
 // OrderBook always gives exactly the same answers as this one.
 class ReferenceBook {
 public:
-    std::vector<Trade> add_limit(const Order& order) {
-        std::vector<Trade> trades;
-        if (order.quantity == 0 || find(order.id) != resting_.end()) {
-            return trades;
-        }
-
-        Order incoming = order;
-        while (incoming.quantity > 0) {
-            auto best = best_opposite(incoming);
-            if (best == resting_.end()) break;
-
-            Quantity filled = std::min(incoming.quantity, best->order.quantity);
-            trades.push_back(Trade{best->order.id, incoming.id, best->order.price, filled});
-            incoming.quantity -= filled;
-            best->order.quantity -= filled;
-            if (best->order.quantity == 0) resting_.erase(best);
-        }
-
-        if (incoming.quantity > 0) {
-            resting_.push_back(Entry{incoming, next_arrival_++});
-        }
-        return trades;
-    }
+    std::vector<Trade> add_limit(const Order& order) { return add(order, false); }
+    std::vector<Trade> add_market(const Order& order) { return add(order, true); }
 
     bool cancel(OrderId id) {
         auto it = find(id);
@@ -61,6 +40,30 @@ public:
     std::size_t order_count() const { return resting_.size(); }
 
 private:
+    std::vector<Trade> add(const Order& order, bool is_market) {
+        std::vector<Trade> trades;
+        if (order.quantity == 0 || find(order.id) != resting_.end()) {
+            return trades;
+        }
+
+        Order incoming = order;
+        while (incoming.quantity > 0) {
+            auto best = best_opposite(incoming, is_market);
+            if (best == resting_.end()) break;
+
+            Quantity filled = std::min(incoming.quantity, best->order.quantity);
+            trades.push_back(Trade{best->order.id, incoming.id, best->order.price, filled});
+            incoming.quantity -= filled;
+            best->order.quantity -= filled;
+            if (best->order.quantity == 0) resting_.erase(best);
+        }
+
+        if (incoming.quantity > 0 && !is_market) {
+            resting_.push_back(Entry{incoming, next_arrival_++});
+        }
+        return trades;
+    }
+
     struct Entry {
         Order order;
         std::uint64_t arrival;
@@ -72,13 +75,13 @@ private:
     }
 
     // The resting order the incoming one should trade with next, or end().
-    std::vector<Entry>::iterator best_opposite(const Order& incoming) {
+    std::vector<Entry>::iterator best_opposite(const Order& incoming, bool is_market) {
         auto best = resting_.end();
         for (auto it = resting_.begin(); it != resting_.end(); ++it) {
             const Order& r = it->order;
             if (r.side == incoming.side) continue;
-            bool crosses = incoming.side == Side::Buy ? r.price <= incoming.price
-                                                      : r.price >= incoming.price;
+            bool crosses = is_market || (incoming.side == Side::Buy ? r.price <= incoming.price
+                                                                    : r.price >= incoming.price);
             if (!crosses) continue;
             if (best == resting_.end() || better(*it, *best)) best = it;
         }

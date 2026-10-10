@@ -18,7 +18,10 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 # --- The order book library --------------------------------------------------
-add_library(exchange cpp/src/order_book.cpp)
+add_library(exchange
+  cpp/src/order_book.cpp
+  cpp/src/event_log.cpp
+  cpp/src/matching_engine.cpp)
 target_include_directories(exchange PUBLIC cpp/include)
 
 # --- Third-party test and benchmark libraries (downloaded at configure time) --
@@ -38,7 +41,8 @@ FetchContent_MakeAvailable(googletest benchmark)
 enable_testing()
 add_executable(exchange_tests
   cpp/tests/order_book_test.cpp
-  cpp/tests/random_compare_test.cpp)
+  cpp/tests/random_compare_test.cpp
+  cpp/tests/engine_test.cpp)
 target_link_libraries(exchange_tests PRIVATE exchange GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(exchange_tests)
@@ -49,3 +53,10 @@ target_link_libraries(order_book_bench PRIVATE exchange benchmark::benchmark)
 
 add_executable(latency cpp/bench/latency.cpp)
 target_link_libraries(latency PRIVATE exchange)
+
+# --- Command-line tools ------------------------------------------------------
+add_executable(record_session cpp/tools/record_session.cpp)
+target_link_libraries(record_session PRIVATE exchange)
+
+add_executable(replay_session cpp/tools/replay_session.cpp)
+target_link_libraries(replay_session PRIVATE exchange)

@@ -28,11 +28,16 @@ void run_random_session(std::uint32_t seed, int steps) {
     for (int step = 0; step < steps; ++step) {
         SCOPED_TRACE("seed " + std::to_string(seed) + ", step " + std::to_string(step));
 
-        if (percent(rng) < 30 && !ids_used.empty()) {
+        int roll = percent(rng);
+        if (roll < 30 && !ids_used.empty()) {
             // Cancel some earlier id; it may already be filled or cancelled.
             std::uniform_int_distribution<std::size_t> pick(0, ids_used.size() - 1);
             OrderId id = ids_used[pick(rng)];
             ASSERT_EQ(book.cancel(id), reference.cancel(id));
+        } else if (roll < 40) {
+            Side side = percent(rng) < 50 ? Side::Buy : Side::Sell;
+            Order order{next_id++, side, 0, quantity(rng)};
+            ASSERT_EQ(book.add_market(order), reference.add_market(order));
         } else {
             Side side = percent(rng) < 50 ? Side::Buy : Side::Sell;
             Order order{next_id++, side, price(rng), quantity(rng)};

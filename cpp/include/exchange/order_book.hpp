@@ -22,10 +22,24 @@ namespace exchange {
 //     cancel fast without searching.
 class OrderBook {
 public:
+    // The id index is a hash table. When it fills up it "rehashes": it
+    // allocates a bigger table and moves every entry across, all inside one
+    // unlucky add_limit call. With 85,000 resting orders that single call
+    // took ~10 ms. Reserving room up front means it never has to grow
+    // during trading. See BENCHMARKS.md for the before/after numbers.
+    explicit OrderBook(std::size_t expected_orders = 1'000'000) {
+        locations_.reserve(expected_orders);
+    }
+
     // Matches the order against the opposite side, then rests whatever
     // quantity is left in the book. Returns the trades it produced, in order.
     // Orders with zero quantity or an id already in the book are ignored.
     std::vector<Trade> add_limit(const Order& order);
+
+    // Trades immediately against the best prices on the other side, at any
+    // price, until filled or the other side runs out. A market order never
+    // rests: any quantity left over is dropped. order.price is ignored.
+    std::vector<Trade> add_market(const Order& order);
 
     // Removes a resting order. Returns false if the id is not in the book
     // (never added, already cancelled, or already fully filled).

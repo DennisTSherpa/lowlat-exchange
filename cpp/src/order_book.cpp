@@ -24,6 +24,22 @@ std::vector<Trade> OrderBook::add_limit(const Order& order) {
     return trades;
 }
 
+std::vector<Trade> OrderBook::add_market(const Order& order) {
+    std::vector<Trade> trades;
+    if (order.quantity == 0 || locations_.contains(order.id)) {
+        return trades;
+    }
+
+    Order incoming = order;
+    auto any_price = [](Price) { return true; };
+    if (incoming.side == Side::Buy) {
+        match(incoming, asks_, any_price, trades);
+    } else {
+        match(incoming, bids_, any_price, trades);
+    }
+    return trades;  // no rest(): leftover quantity is dropped
+}
+
 template <typename OppositeSide, typename Crosses>
 void OrderBook::match(Order& incoming, OppositeSide& opposite, Crosses crosses,
                       std::vector<Trade>& trades) {

@@ -3,6 +3,8 @@
 
 #include <benchmark/benchmark.h>
 
+#include <optional>
+
 #include "exchange/order_book.hpp"
 #include "workload.hpp"
 
@@ -12,14 +14,20 @@ namespace {
 // Adds orders that never cross, so this measures resting an order only.
 void BM_AddNonCrossing(benchmark::State& state) {
     for (auto _ : state) {
+        // Building and destroying the book is not what we're measuring,
+        // so both happen with the timer paused.
         state.PauseTiming();
-        OrderBook book;
+        std::optional<OrderBook> book;
+        book.emplace();
         state.ResumeTiming();
         for (OrderId id = 1; id <= 1000; ++id) {
             Side side = id % 2 ? Side::Buy : Side::Sell;
             Price price = side == Side::Buy ? 9'900 + Price(id % 50) : 10'100 + Price(id % 50);
-            benchmark::DoNotOptimize(book.add_limit({id, side, price, 10}));
+            benchmark::DoNotOptimize(book->add_limit({id, side, price, 10}));
         }
+        state.PauseTiming();
+        book.reset();
+        state.ResumeTiming();
     }
     state.SetItemsProcessed(state.iterations() * 1000);
 }
@@ -29,16 +37,22 @@ BENCHMARK(BM_AddNonCrossing);
 void BM_MixedWorkload(benchmark::State& state) {
     const auto actions = make_workload(100'000);
     for (auto _ : state) {
+        // Building and destroying the book is not what we're measuring,
+        // so both happen with the timer paused.
         state.PauseTiming();
-        OrderBook book;
+        std::optional<OrderBook> book;
+        book.emplace();
         state.ResumeTiming();
         for (const Action& action : actions) {
             if (action.is_cancel) {
-                benchmark::DoNotOptimize(book.cancel(action.order.id));
+                benchmark::DoNotOptimize(book->cancel(action.order.id));
             } else {
-                benchmark::DoNotOptimize(book.add_limit(action.order));
+                benchmark::DoNotOptimize(book->add_limit(action.order));
             }
         }
+        state.PauseTiming();
+        book.reset();
+        state.ResumeTiming();
     }
     state.SetItemsProcessed(state.iterations() * std::int64_t(actions.size()));
 }

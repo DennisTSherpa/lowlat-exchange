@@ -13,6 +13,71 @@ cmake --build build
 
 The workload is fixed by a random seed (see `cpp/bench/workload.hpp`). It is about 70% new limit orders within ±50 ticks of a mid price and 30% cancels of recent orders. Roughly half the orders trade.
 
+## Milestone 2: no hash table resize during trading
+
+**Same machine and settings as milestone 1.** Each row of the latency table is the old and new binary run back to back, three times over.
+
+### Finding the cause
+
+Milestone 1 showed a worst case of about 10 ms on every run. Logging the slowest operations together with the book size at that moment gave:
+
+| Slow operation | Resting orders at that moment |
+|---|---|
+| 10.6 ms | 85,230 |
+| 3.2 ms | 42,044 |
+| 0.8 ms | 20,754 |
+| 0.2 ms | 10,274 |
+
+The sizes roughly double each time. A small test program printed the exact sizes at which `std::unordered_map` (GCC's standard library) grows its table: **5,088, 10,274, 20,754, 42,044 and 85,230**. They match exactly. Each growth step ("rehash") allocates a bigger table and moves every entry across, all inside one unlucky `add_limit` call.
+
+### The fix
+
+One line: the `OrderBook` constructor calls `locations_.reserve(expected_orders)` (default 1,000,000), so the table is big enough from the start and never grows while trading.
+
+### Latency per operation, before and after
+
+| Run | p50 | p90 | p99 | p99.9 | max |
+|-----|-----|-----|-----|-------|-----|
+| before | 152 ns | 346 ns | 729 ns | 2,702 ns | 9.97 ms |
+| after  | 111 ns | 212 ns | 478 ns | 3,027 ns | 0.13 ms |
+| before | 147 ns | 326 ns | 677 ns | 2,328 ns | 11.4 ms |
+| after  | 117 ns | 235 ns | 563 ns | 3,695 ns | 0.72 ms |
+| before | 162 ns | 385 ns | 813 ns | 4,144 ns | 10.1 ms |
+| after  | 114 ns | 228 ns | 515 ns | 2,287 ns | 1.73 ms |
+
+- **The max dropped from ~10 ms to 0.1–1.7 ms**, and the cliff no longer grows with the book.
+- The median and p99 also improved by about 25–30%, probably because entries no longer get moved around in memory.
+- p99.9 didn't change much. The remaining spikes vary from run to run, which points to the machine (a shared cloud VM) or to memory allocation in `std::map` and `std::list`, and not to the hash table. That's the next thing to investigate.
+- **Trade-off:** reserving room for 1,000,000 orders costs about 8 MB of memory up front, even for an empty book.
+
+### Throughput (`./build/order_book_bench`)
+
+| Benchmark | Result |
+|-----------|--------|
+| Add 1,000 orders that don't trade | 13.4–14.0 M orders/s |
+| Mixed workload, 100,000 actions | 10.3–11.3 M actions/s |
+
+These numbers aren't directly comparable with milestone 1's. The benchmark now pauses the timer while the book is destroyed, because freeing the reserved table isn't part of trading.
+
+## Determinism check
+
+```bash
+./build/record_session session.bin 1000000   # run the workload, log every event
+./build/replay_session session.bin           # rebuild everything from the log
+```
+
+Both print the same summary, including a fingerprint (a hash) of every trade:
+
+```
+events:            1000000
+trades:            541783
+resting orders:    90890
+best bid / ask:    9971 / 10018
+trade fingerprint: fc48cffe340654e4
+```
+
+The log is 22 bytes per event, so 22 MB for a million events. CI runs this check on every push.
+
 ## Milestone 1: standard-library order book
 
 **Machine:** shared 4-core cloud VM, Intel Xeon @ 2.10 GHz, GCC 13.3, `-O3` Release build, no CPU pinning or tuning.

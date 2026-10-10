@@ -9,8 +9,8 @@ The rule for this project is **simplest version first**. Each part starts with p
 | Milestone | What | State |
 |-----------|------|-------|
 | 1 | Order book: add, cancel, match, with tests and benchmarks | ✅ done |
-| 2 | Matching engine: market orders, event log, replay | next |
-| 3 | Order entry over TCP, end-to-end latency | planned |
+| 2 | Matching engine: market orders, event log, replay, 10 ms worst case fixed | ✅ done |
+| 3 | Order entry over TCP, end-to-end latency | next |
 | 4 | Python: bindings, market simulator, backtest | planned |
 | 5 | Web view of the live book | planned |
 
@@ -23,6 +23,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/latency
+./build/record_session session.bin && ./build/replay_session session.bin
 ```
 
 GoogleTest and Google Benchmark are downloaded automatically the first time you run CMake.
@@ -49,25 +50,46 @@ index: std::unordered_map<order id, where the order sits>   for fast cancel
 - **Resting:** append to the back of the list at that price, which keeps arrival order.
 - **Cancel:** look the id up in the index and erase it from its list directly. There's no search.
 - **Prices are integers** (ticks), not `double`, so prices compare exactly.
+- **Market orders** use the same matching loop, but any price counts as crossing, and whatever quantity is left over is dropped instead of resting.
+- **Room is reserved up front** in the id index, so it never has to resize in the middle of trading. Resizing once took 10 ms; see [BENCHMARKS.md](BENCHMARKS.md#milestone-2-no-hash-table-resize-during-trading) for how that was found.
+
+## Matching engine and event log
+
+```
+event (add limit / add market / cancel)
+   │
+   ▼
+MatchingEngine::process ──► append to event log file (22 bytes per event)
+   │
+   ▼
+OrderBook ──► trades
+```
+
+- [`MatchingEngine`](cpp/include/exchange/matching_engine.hpp) is the single entry point. It writes each event to the log *before* applying it, so the log is a complete record of the session.
+- The engine is **deterministic**. It has no clocks, no randomness and no threads, so the same events always produce the same trades.
+- That means any session can be **replayed** from its log, so a bug seen once can be reproduced as many times as needed. `record_session` and `replay_session` show this: both print a fingerprint of every trade, and the two fingerprints match. CI checks this on every push.
+- The log format ([`event_log.hpp`](cpp/include/exchange/event_log.hpp)) is fixed-size binary records: type, side, id, price, quantity. There's nothing to parse; the reader just copies the bytes back.
 
 ## How we know it's correct
 
 - **Unit tests** ([`order_book_test.cpp`](cpp/tests/order_book_test.cpp)) cover each rule on its own: priority, partial fills, sweeping several levels, and cancels.
-- **Randomized comparison** ([`random_compare_test.cpp`](cpp/tests/random_compare_test.cpp)): a slow [reference book](cpp/tests/reference_book.hpp) that just scans a flat list is easy to check by eye. The test sends 100,000 random orders and cancels to both books and checks they agree after every step. If the real book swapped "oldest first" for "newest first", this test would catch it within a few dozen steps.
+- **Randomized comparison** (limit orders, market orders and cancels) ([`random_compare_test.cpp`](cpp/tests/random_compare_test.cpp)): a slow [reference book](cpp/tests/reference_book.hpp) that just scans a flat list is easy to check by eye. The test sends 100,000 random orders and cancels to both books and checks they agree after every step. If the real book swapped "oldest first" for "newest first", this test would catch it within a few dozen steps.
+- **Replay test** ([`engine_test.cpp`](cpp/tests/engine_test.cpp)) records 20,000 random events, replays them into a fresh engine, and checks that the trades and the final book are identical.
 - **CI** runs every test with GCC, with Clang, and under AddressSanitizer and UndefinedBehaviorSanitizer, which catch memory bugs.
 
 ## Performance
 
-See [BENCHMARKS.md](BENCHMARKS.md). Current median: **~150 ns per operation**; p99: **~650 ns** on a shared cloud VM.
+See [BENCHMARKS.md](BENCHMARKS.md). On a shared cloud VM, the current median is **~115 ns per operation**, p99 is **~500 ns**, and the worst case is **under 2 ms** (down from 10 ms).
 
 We report percentiles, not averages. In trading the slow outliers matter most, because the one slow order is the one that misses the trade.
 
 ## Layout
 
 ```
-cpp/include/exchange/   headers (types, order book)
+cpp/include/exchange/   headers (types, order book, event log, matching engine)
 cpp/src/                implementation
 cpp/tests/              unit tests, reference book, randomized comparison test
 cpp/bench/              Google Benchmark + latency percentile tool
+cpp/tools/              record_session / replay_session
 .github/workflows/      CI
 ```
