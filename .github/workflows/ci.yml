@@ -24,10 +24,13 @@ jobs:
             flags: -DCMAKE_BUILD_TYPE=Debug -DEXCHANGE_SANITIZE=ON
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install Ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.flags }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DPYTHON_EXECUTABLE=$(which python) ${{ matrix.flags }}
       - name: Build
         run: cmake --build build
       - name: Test
@@ -52,3 +55,9 @@ jobs:
           sleep 1  # let the server flush its log after the client disconnects
           kill $SERVER_PID
           ./build/replay_session server.bin
+      - name: Python tests
+        if: matrix.name != 'Sanitizers (ASan + UBSan)'
+        run: PYTHONPATH=build/python python -m unittest discover -s python/tests -v
+      - name: Market-making backtest
+        if: matrix.name == 'Release (GCC)'
+        run: PYTHONPATH=build/python python python/backtest/market_maker.py --steps 5000 --seeds 3
