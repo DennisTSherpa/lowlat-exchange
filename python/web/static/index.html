@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Low-Latency Exchange</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2;
+    --panel: #fcfcfb;
+    --border: #e2e1dc;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --text-3: #7a7974;
+    --bid: #1baf7a;
+    --bid-soft: rgba(27, 175, 122, 0.16);
+    --ask: #e34948;
+    --ask-soft: rgba(227, 73, 72, 0.14);
+    --series: #2a78d6;
+    --series-soft: rgba(42, 120, 214, 0.12);
+    --zero: #c9c8c2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #111110;
+      --panel: #1a1a19;
+      --border: #2e2d2b;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --text-3: #8f8e86;
+      --bid: #199e70;
+      --bid-soft: rgba(25, 158, 112, 0.22);
+      --ask: #e66767;
+      --ask-soft: rgba(230, 103, 103, 0.2);
+      --series: #3987e5;
+      --series-soft: rgba(57, 135, 229, 0.18);
+      --zero: #45443f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { padding: 20px 24px 8px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 650; }
+  .subtitle { color: var(--text-2); margin-top: 2px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; padding: 12px 24px; }
+  .stat { min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .stat .label { color: var(--text-2); font-size: 12px; }
+  .stat .value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  main { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(240px, 1fr) minmax(300px, 1.2fr); gap: 12px; padding: 0 24px 24px; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: minmax(0, 1fr); padding: 0 16px 16px; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-left: 16px; padding-right: 16px; }
+    header { padding-left: 16px; padding-right: 16px; }
+    .stat .value { font-size: 16px; }
+  }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
+  h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .column { display: grid; gap: 12px; align-content: start; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: right; color: var(--text-3); font-weight: 500; font-size: 12px; padding: 2px 6px; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 3px 6px; }
+  .ladder td { position: relative; }
+  .ladder .bar { position: absolute; top: 2px; bottom: 2px; right: 0; border-radius: 4px 0 0 4px; z-index: 0; }
+  .ladder td span { position: relative; z-index: 1; }
+  .ask-row .price { color: var(--ask); }
+  .bid-row .price { color: var(--bid); }
+  .ask-row .bar { background: var(--ask-soft); }
+  .bid-row .bar { background: var(--bid-soft); }
+  .spread-row td { color: var(--text-2); text-align: center; padding: 6px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12px; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-2); }
+  .tag.you { border-color: var(--series); color: var(--text); }
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  label { display: grid; gap: 3px; font-size: 12px; color: var(--text-2); }
+  input, select, button { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .buttons { grid-column: span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button { cursor: pointer; font-weight: 600; border: none; color: #fff; }
+  button.buy { background: var(--bid); }
+  button.sell { background: var(--ask); }
+  #order-result { grid-column: span 2; min-height: 20px; font-size: 13px; color: var(--text-2); }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: 140px; overflow: visible; }
+  .tooltip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; white-space: nowrap; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+  .hist { display: grid; gap: 4px; }
+  .hist-row { display: grid; grid-template-columns: 70px 1fr 54px; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+  .hist-track { height: 14px; }
+  .hist-bar { height: 100%; background: var(--series); border-radius: 0 4px 4px 0; min-width: 1px; }
+  .note { color: var(--text-3); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Low-Latency Exchange</h1>
+  <div class="subtitle">A C++ order book, a simulated market and a market maker, live.</div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="label">Fair price</div><div class="value num" id="fair">–</div></div>
+  <div class="stat"><div class="label">Best bid / ask</div><div class="value num" id="bbo">–</div></div>
+  <div class="stat"><div class="label">Market maker position</div><div class="value num" id="position">–</div></div>
+  <div class="stat"><div class="label">Market maker P&amp;L</div><div class="value num" id="pnl">–</div></div>
+  <div class="stat"><div class="label">Orders in book</div><div class="value num" id="orders">–</div></div>
+  <div class="stat"><div class="label">Median book call</div><div class="value num" id="p50">–</div></div>
+</div>
+
+<main>
+  <section>
+    <h2>Order book</h2>
+    <table class="ladder num">
+      <thead><tr><th>Price</th><th>Quantity</th></tr></thead>
+      <tbody id="ladder"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Recent trades</h2>
+    <div>
+      <table class="num">
+        <thead><tr><th>Price</th><th>Qty</th><th>Who</th></tr></thead>
+        <tbody id="trades"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="column">
+    <section>
+      <h2>Place an order</h2>
+      <form id="order-form">
+        <label>Type
+          <select name="type"><option value="limit">Limit</option><option value="market">Market</option></select>
+        </label>
+        <label>Quantity <input name="quantity" type="number" min="1" max="1000" value="10" required></label>
+        <label style="grid-column: span 2">Limit price ($) <input name="price" type="number" step="0.01" min="0.01" value="100.00"></label>
+        <div class="buttons">
+          <button type="submit" class="buy" data-side="buy">Buy</button>
+          <button type="submit" class="sell" data-side="sell">Sell</button>
+        </div>
+        <div id="order-result" role="status"></div>
+      </form>
+    </section>
+
+    <section>
+      <h2>Market maker P&amp;L ($)</h2>
+      <div class="chart" id="pnl-chart">
+        <svg viewBox="0 0 300 140" preserveAspectRatio="none" aria-label="Market maker profit and loss over time"></svg>
+        <div class="tooltip"></div>
+      </div>
+      <div class="note" id="pnl-note"></div>
+    </section>
+
+    <section>
+      <h2>Order book call time</h2>
+      <div class="hist" id="latency"></div>
+      <div class="note" id="latency-note"></div>
+    </section>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

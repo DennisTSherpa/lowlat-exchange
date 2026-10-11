@@ -2,6 +2,8 @@
 
 A stock-exchange-style matching engine in C++, built step by step, with every latency claim backed by a benchmark you can rerun.
 
+![Live web view](docs/screenshot.png)
+
 The rule for this project is **simplest version first**. Each part starts with plain standard-library code that someone with foundation knowledge of C++ can follow. An optimization only goes in when a benchmark shows it helps, and the README explains it in plain words.
 
 ## Status
@@ -12,7 +14,7 @@ The rule for this project is **simplest version first**. Each part starts with p
 | 2 | Matching engine: market orders, event log, replay, 10 ms worst case fixed | ✅ done |
 | 3 | Order entry over TCP, end-to-end latency | ✅ done |
 | 4 | Python: bindings, market simulator, backtest | ✅ done |
-| 5 | Web view of the live book | next |
+| 5 | Live web view of the book, trades, P&L and latency | ✅ done |
 
 ## Build and test
 
@@ -36,6 +38,9 @@ GoogleTest, Google Benchmark and pybind11 are downloaded automatically the first
 # Python tests and the market-making backtest
 PYTHONPATH=build/python python3 -m unittest discover -s python/tests -v
 PYTHONPATH=build/python python3 python/backtest/market_maker.py
+
+# live web view, then open http://127.0.0.1:8000
+PYTHONPATH=build/python python3 python/web/server.py
 ```
 
 ## How the order book works
@@ -100,7 +105,7 @@ Python simulator + strategy ──pybind11──► the same C++ OrderBook
 ```
 
 - **Bindings** ([`bindings.cpp`](python/bindings/bindings.cpp)) expose the C++ `OrderBook` to Python as the `exchange_py` module. Python uses the exact same matching code as the server, so there's only one implementation to trust.
-- **Simulator** ([`simulator.py`](python/sim/simulator.py)): a hidden *fair price* moves randomly. Liquidity providers place limit orders a few ticks either side of it and cancel old ones, and noise traders send small market orders in random directions. One seed controls everything, so a run repeats exactly.
+- **Simulator** ([`simulator.py`](python/sim/simulator.py)): a hidden *fair price* moves randomly. Liquidity providers place limit orders a few ticks either side of it and cancel their oldest orders so the book stays a steady size, and noise traders send small market orders in random directions. One seed controls everything, so a run repeats exactly.
 - **Market maker** ([`market_maker.py`](python/backtest/market_maker.py)): it keeps one bid and one ask around the mid price and earns the spread when others trade with it. **Inventory skew** shifts both quotes against its position: long means quote lower, so it sells more and buys less.
 - **Edge per share** measures, for every fill, how far the trade price was from the fair price in the market maker's favour. It's a cleaner signal than profit, which swings with whatever inventory happens to be held.
 
@@ -110,15 +115,27 @@ Python simulator + strategy ──pybind11──► the same C++ OrderBook
 
 | Scenario | PnL ($) | Edge per share (ticks) | Fills | Max position |
 |----------|---------|------------------------|-------|--------------|
-| calm market, no skew | 8.62 ± 8.30 | 0.50 ± 0.34 | 671 | 54 |
-| calm market, skew | 13.29 ± 3.37 | 0.78 ± 0.15 | 510 | 38 |
-| fast market, no skew | -35.35 ± 12.30 | -0.69 ± 0.41 | 1,124 | 54 |
-| fast market, skew | -0.14 ± 9.45 | 0.03 ± 0.18 | 1,169 | 54 |
+| calm market, no skew | 175.16 ± 17.51 | 1.13 ± 0.02 | 3,818 | 54 |
+| calm market, skew | 116.93 ± 3.84 | 1.05 ± 0.02 | 2,853 | 17 |
+| fast market, no skew | 53.38 ± 37.60 | 0.65 ± 0.10 | 1,669 | 54 |
+| fast market, skew | 35.41 ± 4.22 | 0.78 ± 0.05 | 1,238 | 17 |
 
 What this shows:
-- **In a calm market, making markets pays.** The market maker earns about half a tick per share.
-- **In a fast market it loses money. This is adverse selection.** When the price moves before the quotes are updated, the providers' fresh orders trade against the stale quotes, so the market maker sells just before prices rise and buys just before they fall. Edge per share turns negative. This is the main reason trading firms care about speed: the faster you can update quotes, the less of this you suffer.
-- **Skew helps in both markets.** It raises profit, cuts the run-to-run spread, and in a fast market turns a clear loss into roughly break-even.
+- **Making markets pays when the market is calm:** about a tick per share, close to the one-tick half spread it quotes.
+- **A fast market costs it most of that. This is adverse selection.** When the price moves before the quotes are updated, the providers' fresh orders trade against the stale quotes, so the market maker sells just before prices rise and buys just before they fall. Edge per share drops from 1.13 to 0.65 ticks. This is the main reason trading firms care about speed: the faster you can update quotes, the less of this you suffer.
+- **Skew trades profit for safety.** It quotes less aggressively on the side that would grow its position, so it gets fewer fills and earns less. But its largest position drops from 54 shares to 17, and the run-to-run spread of profit shrinks by 4–9×. Most real desks would take that trade.
+
+## Live web view
+
+```
+browser ──polls /api/state 4× a second──► server.py ──► simulator + market maker ──► C++ OrderBook
+        ──POST /api/order──────────────►
+```
+
+- [`server.py`](python/web/server.py) uses only the Python standard library (`http.server`), so there's nothing extra to install. A background thread runs the simulator and the market maker at 100 steps per second, and a lock stops the simulation and web requests from touching the book at the same time.
+- The page ([`index.html`](python/web/static/index.html), [`app.js`](python/web/static/app.js)) is plain HTML and JavaScript with no frameworks. It shows the top 10 price levels on each side, the latest trades (tagged when the market maker or you took part), the market maker's live position and P&L, and a histogram of how long each order book call takes.
+- **You can trade too.** The order form sends limit or market orders straight into the same book.
+- The call times are measured from Python, so they include roughly half a microsecond of Python-to-C++ overhead on top of the matching itself. The pure C++ numbers are in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## How we know it's correct
 
@@ -127,6 +144,7 @@ What this shows:
 - **Replay test** ([`engine_test.cpp`](cpp/tests/engine_test.cpp)) records 20,000 random events, replays them into a fresh engine, and checks that the trades and the final book are identical.
 - **Network tests** ([`tcp_test.cpp`](cpp/tests/tcp_test.cpp)) start a real server on a random local port, talk to it with the client, and check every response and the final book.
 - **Python tests** ([`test_python.py`](python/tests/test_python.py)) check the bindings, that the simulator repeats exactly for a given seed, and the market maker's cash and inventory accounting on a hand-worked example.
+- **Web tests** ([`test_web.py`](python/tests/test_web.py)) check the ladder ordering, that the book stays a steady size, order validation, and the real HTTP endpoints.
 - **CI** runs every test with GCC, with Clang, and under AddressSanitizer and UndefinedBehaviorSanitizer, which catch memory bugs.
 
 ## Performance
@@ -146,6 +164,7 @@ cpp/tools/              exchange_server, load_client, record_session, replay_ses
 python/bindings/        pybind11 module exposing the order book
 python/sim/             market simulator
 python/backtest/        market-making strategy and backtest
+python/web/             live web view (server + one static page)
 python/tests/           Python tests (standard-library unittest)
 .github/workflows/      CI
 ```

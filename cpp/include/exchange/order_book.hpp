@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "exchange/types.hpp"
@@ -50,6 +51,10 @@ public:
 
     // Total resting quantity at one price on one side (0 if none).
     Quantity volume_at(Side side, Price price) const;
+
+    // The best `levels` price levels on one side, best first, as
+    // (price, total quantity) pairs. Used to draw the price ladder.
+    std::vector<std::pair<Price, Quantity>> depth(Side side, std::size_t levels) const;
 
     // True if an order with this id is resting in the book.
     bool has_order(OrderId id) const { return locations_.contains(id); }

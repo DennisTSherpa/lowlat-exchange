@@ -54,6 +54,8 @@ PYBIND11_MODULE(exchange_py, m) {
         .def("best_bid", &OrderBook::best_bid, "Highest bid price, or None")
         .def("best_ask", &OrderBook::best_ask, "Lowest ask price, or None")
         .def("volume_at", &OrderBook::volume_at, py::arg("side"), py::arg("price"))
+        .def("depth", &OrderBook::depth, py::arg("side"), py::arg("levels"),
+             "Best price levels on one side, best first, as (price, quantity) tuples")
         .def("has_order", &OrderBook::has_order, py::arg("order_id"))
         .def("order_count", &OrderBook::order_count);
 }

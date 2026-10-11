@@ -122,4 +122,22 @@ Quantity OrderBook::volume_at(Side side, Price price) const {
     return side == Side::Buy ? sum(bids_) : sum(asks_);
 }
 
+std::vector<std::pair<Price, Quantity>> OrderBook::depth(Side side, std::size_t levels) const {
+    std::vector<std::pair<Price, Quantity>> result;
+    auto collect = [&](const auto& book_side) {
+        for (const auto& [price, level] : book_side) {
+            if (result.size() == levels) break;
+            Quantity total = 0;
+            for (const Order& order : level) total += order.quantity;
+            result.emplace_back(price, total);
+        }
+    };
+    if (side == Side::Buy) {
+        collect(bids_);
+    } else {
+        collect(asks_);
+    }
+    return result;
+}
+
 }  // namespace exchange

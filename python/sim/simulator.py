@@ -15,6 +15,7 @@ Everything is driven by one random seed, so a run can be repeated exactly.
 from __future__ import annotations
 
 import random
+from collections import deque
 from dataclasses import dataclass
 
 import exchange_py as ex
@@ -40,7 +41,7 @@ class SimConfig:
     limit_orders_per_step: int = 4     # liquidity provider orders per step
     min_distance: int = 3              # providers quote between min_distance and max_distance
     max_distance: int = 10             #   ticks away from fair, leaving room inside the spread
-    cancels_per_step: int = 3          # old provider orders cancelled per step (keeps the book a steady size)
+    max_resting_orders: int = 300      # providers cancel their oldest orders beyond this many
     noise_probability: float = 0.30    # chance per step of a noise market order
     max_quantity: int = 10
 
@@ -52,7 +53,7 @@ class MarketSimulator:
         self.config = config
         self.rng = random.Random(config.seed)
         self.fair_price = float(config.start_price)
-        self._resting: list[int] = []  # ids of provider orders that may still rest
+        self._resting: deque[int] = deque()  # provider order ids, oldest first (some may be filled already)
 
     def fair_tick(self) -> int:
         return round(self.fair_price)
@@ -80,11 +81,11 @@ class MarketSimulator:
             if self.book.has_order(order_id):
                 self._resting.append(order_id)
 
-        # Providers cancel a few old orders, so stale prices get cleaned up.
-        # Some of these ids were already filled; cancel() then just returns False.
-        for _ in range(min(cfg.cancels_per_step, len(self._resting))):
-            index = rng.randrange(len(self._resting))
-            self.book.cancel(self._resting.pop(index))
+        # Orders don't live forever: providers cancel their oldest ones, which
+        # keeps the book a steady size and clears out stale prices. If an old
+        # order was already filled, cancel() just returns False.
+        while len(self._resting) > cfg.max_resting_orders:
+            self.book.cancel(self._resting.popleft())
 
         # Noise traders: market orders in a random direction.
         if rng.random() < cfg.noise_probability:

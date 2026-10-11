@@ -128,5 +128,20 @@ TEST(OrderBook, MarketOrderIntoEmptyBookDoesNothing) {
     EXPECT_EQ(book.order_count(), 0u);
 }
 
+TEST(OrderBook, DepthListsBestLevelsFirst) {
+    OrderBook book;
+    book.add_limit(buy(1, 98, 5));
+    book.add_limit(buy(2, 99, 3));
+    book.add_limit(buy(3, 99, 4));
+    book.add_limit(buy(4, 97, 1));
+    book.add_limit(sell(5, 101, 2));
+
+    using Levels = std::vector<std::pair<Price, Quantity>>;
+    EXPECT_EQ(book.depth(Side::Buy, 2), (Levels{{99, 7}, {98, 5}}));
+    EXPECT_EQ(book.depth(Side::Buy, 10), (Levels{{99, 7}, {98, 5}, {97, 1}}));
+    EXPECT_EQ(book.depth(Side::Sell, 10), (Levels{{101, 2}}));
+    EXPECT_TRUE(OrderBook().depth(Side::Sell, 5).empty());
+}
+
 }  // namespace
 }  // namespace exchange
